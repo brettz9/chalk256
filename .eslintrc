@@ -1,0 +1,51 @@
+{
+  "extends": "standard",
+  "env": {
+    "browser": true
+  },
+  "parserOptions": {
+    "ecmaVersion": 6,
+    "sourceType": "module"
+  },
+  "globals": {
+    "QUnit": false,
+    "_": false,
+    "asyncTest": false,
+    "DB": false,
+    "dbVersion": true,
+    "nextTest": false,
+    "sample": false,
+    "queuedAsyncTest": false,
+    "queuedModule": false,
+
+    "util": false,
+    "env": false,
+    "mocha": false,
+    "beforeEach": false,
+    "afterEach": false,
+    "describe": false,
+    "expect": false,
+    "assert": false,
+    "it": false,
+    "chai": false,
+    "sinon": false
+  },
+  "plugins": ["compat"],
+  "settings": {
+    "targets": [
+        "chrome", "firefox", "edge", "safari", "ios_saf", "android",
+        "opera", "ie", "op_mini", "bb", "op_mob", "and_chr",
+        "and_ff", "ie_mob", "and_uc", "samsung"
+    ],
+    "polyfills": [],
+    "coverage": true,
+    "compiler": "babel"
+  },
+  "rules": {
+    "semi": [2, "always"],
+    "indent": ["error", 4],
+    "one-var": 0,
+    "no-var": 2,
+    "prefer-const": 2,
+  }
+}

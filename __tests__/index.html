@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8"/>
+    <meta name="msapplication-tap-highlight" content="no"/>
+    <meta name="viewport" content="user-scalable=no, initial-scale=1, width=device-width, height=device-height, target-densitydpi=device-dpi"/>
+    <title>Testing color-everywhere</title>
+
+    <link rel="stylesheet" href="../node_modules/mocha/mocha.css"/>
+  </head>
+  <body>
+    <div id="mocha"></div>
+
+    <!-- Test Environment -->
+    <script src="../node_modules/mocha/mocha.js"></script>
+    <script src="../node_modules/chai/chai.js"></script>
+    <script src="../node_modules/sinon/pkg/sinon.js"></script>
+
+    <!-- color-everywhere -->
+    <script src="../dist/color-everywhere.js"></script>
+    <!-- Unit Tests -->
+    <script>
+        mocha.setup('bdd');
+        var expect = chai.expect;
+        mocha.globals(['colors']);
+    </script>
+    <script src="color-everywhere-test.js"></script>
+
+    <script>
+      mocha.run();
+    </script>
+  </body>
+</html>
