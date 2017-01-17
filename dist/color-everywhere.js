@@ -5,6 +5,296 @@ module.exports = function () {
 };
 
 },{}],2:[function(require,module,exports){
+"use strict";
+
+const
+
+    O = require ('es7-object-polyfill'),
+      
+    colorCodes = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white', '', 'default'],
+    styleCodes = ['', 'bright', 'dim', 'italic', 'underline', '', '', 'inverse'],
+
+    brightCssColors = { black:   [0,     0,   0],
+                        red:     [255,  51,   0],
+                        green:   [51,  204,  51],
+                        yellow:  [255, 153,  51],
+                        blue:    [26,  140, 255],
+                        magenta: [255,   0, 255],
+                        cyan:    [0,   204, 255],
+                        white:   [255, 255, 255]    },
+
+    cssColors = {   black:   [0,     0,   0],
+                    red:     [204,   0,   0],
+                    green:   [0,   204,   0],
+                    yellow:  [204, 102,   0],
+                    blue:    [0,     0, 255],
+                    magenta: [204,   0, 204],
+                    cyan:    [0,   153, 255],
+                    white:   [255, 255, 255]    },
+
+    types = {   0:  'style',
+                2:  'unstyle',
+                3:  'color',
+                4:  'bgColor',
+                10: 'bgColorBright' },
+
+    subtypes = {    color:         colorCodes,
+                    bgColor:       colorCodes,
+                    bgColorBright: colorCodes,
+                    style:         styleCodes,
+                    unstyle:       styleCodes    }
+
+class Color {
+
+    constructor (background, name, brightness) {
+
+        this.background = background
+        this.name       = name
+        this.brightness = brightness
+    }
+
+    get inverse () {
+        return new Color (!this.background, this.name || (this.background ? 'black' : 'white'), this.brightness) }
+
+    css (inverted, brightness_) {
+
+        const color = inverted ? this.inverse : this
+
+        const brightness = color.brightness || brightness_
+
+        const prop = (color.background ? 'background:' : 'color:'),
+              rgb  = ((brightness === Code.bright) ? brightCssColors : cssColors)[color.name]
+
+        return rgb ? (prop + 'rgba(' + [...rgb, (brightness === Code.dim) ? 0.5 : 1].join (',') + ');') : ''
+    }
+}
+
+class Code {
+
+    constructor (n) {
+        if (n !== undefined) { this.value = Number (n) } }
+
+    get type () {
+       return types[Math.floor (this.value / 10)] }
+
+    get subtype () {
+        return (subtypes[this.type] || [])[this.value % 10] }
+
+    get str () {
+        return this.value ? ('\u001b\[' + this.value + 'm') : '' }
+
+    get isBrightness () {
+        return (this.value === Code.noBrightness) || (this.value === Code.bright) || (this.value === Code.dim) }
+}
+
+Object.assign (Code, {
+
+    bright:       1,
+    dim:          2,
+    inverse:      7,
+    noBrightness: 22,
+    noItalic:     23,
+    noUnderline:  24,
+    noInverse:    27,
+    noColor:      39,
+    noBgColor:    49
+})
+
+const camel = (a, b) => a + b.charAt (0).toUpperCase () + b.slice (1)
+
+class Colors {
+
+    constructor (s) {
+
+        if (s) {
+
+            const r = /\u001b\[(\d+)m/g
+
+            const spans = s.split (/\u001b\[\d+m/)
+            const codes = []
+
+            for (let match; match = r.exec (s);) codes.push (match[1])
+
+            this.spans = spans.map ((s, i) => ({ text: s, code: new Code (codes[i]) })) 
+        }
+
+        else {
+            this.spans = []
+        }
+    }
+
+    get str () {
+        return this.spans.reduce ((str, p, i) => str + p.text + (p.code ? p.code.str : ''), '') }
+
+/*  Arranges colors in stack and reconstructs proper linear form from that stack    */
+
+    get normalized () {
+
+        const stackBgColor    = [new Code (Code.noBgColor)],
+              stackBrightness = [new Code (Code.noBrightness)]
+        
+        const colorStacks = {
+                    color: [new Code (Code.noColor)],
+                    bgColor: stackBgColor,
+                    bgColorBright: stackBgColor },
+
+              styleStacks = {
+                    bright: stackBrightness,
+                    dim: stackBrightness,
+                    underline: [new Code (Code.noUnderline)],
+                    inverse: [new Code (Code.noInverse)],
+                    italic: [new Code (Code.noItalic)] }
+
+        return O.assign (new Colors (), {
+
+            spans: this.spans.map ((p, i) => {
+
+                switch (p.code.type) {
+
+                    case 'color':
+                    case 'bgColor':
+                    case 'bgColorBright':
+
+                        const stack = colorStacks[p.code.type]
+
+                        if (p.code.subtype !== 'default') { stack.unshift (p.code) }
+                        else { stack.shift (); return O.assign ({}, p, { code: stack[0] }) }
+                        break
+
+                    case 'style':
+
+                        styleStacks[p.code.subtype].unshift (p.code)
+                        break
+
+                    case 'unstyle':
+
+                        const s = styleStacks[p.code.subtype]
+                        s.shift (); return O.assign ({}, p, { code: s[0] })
+                        break
+                }
+                
+                return p
+            })
+        })
+    }
+
+    get styledWithCSS () {
+
+        var color      = new Color (),
+            bgColor    = new Color (true /* background */),
+            brightness = undefined,
+            styles     = new Set ()
+
+        return O.assign (new Colors (), {
+
+            spans: this.spans.map (p => { const c = p.code
+
+                const inverted  = styles.has ('inverse'),
+                      underline = styles.has ('underline')   ? 'font-style: underline;' : '',                      
+                      italic    = styles.has ('italic')      ? 'text-decoration: italic;' : '',
+                      bold      = brightness === Code.bright ? 'font-weight: bold;' : ''
+
+                const styledPart = O.assign ({ css: bold + italic + underline +
+                                                        color  .css (inverted, brightness) +
+                                                        bgColor.css (inverted) }, p)
+                if (c.isBrightness) {
+                    brightness = c.value }
+
+                else {
+
+                    switch (p.code.type) {
+
+                        case 'color'        : color   = new Color (false, c.subtype);              break
+                        case 'bgColor'      : bgColor = new Color (true,  c.subtype);              break
+                        case 'bgColorBright': bgColor = new Color (true,  c.subtype, Code.bright); break
+
+                        case 'style'  : styles.add    (c.subtype); break
+                        case 'unstyle': styles.delete (c.subtype); break } }
+
+                return styledPart
+
+            }).filter (s => s.text.length > 0)
+        })
+    }
+
+/*  Outputs with WebInspector-compatible format     */
+
+    get browserConsoleArguments () {
+
+        const spans = this.styledWithCSS.spans
+
+        return [spans.map (p => ('%c' + p.text)).join (''),
+             ...spans.map (p => p.css)]
+    }
+
+/*  Installs unsafe String extensions   */
+
+    static get nice () {
+
+        const def = k => O.defineProperty (String.prototype, k,  { get: function () { return Colors[k] (this) } })
+
+        colorCodes.forEach ((k, i) => {
+            if (!(k in String.prototype)) {
+                [                   k,
+                 camel ('bg',       k),
+                 camel ('bgBright', k)].forEach (def) } })
+
+        styleCodes.forEach ((k, i) => { if (!(k in String.prototype)) def (k) })
+
+        return Colors
+    }
+
+/*  Parsing front-end   */
+
+    static parse (s) {
+        return new Colors (s).normalized.styledWithCSS
+    }
+
+/*  Iteration protocol  */
+
+    [Symbol.iterator] () {
+        return this.spans[Symbol.iterator] ()
+    }
+}
+
+const normalize = s => new Colors (s).normalized.str
+const wrap = (open, close) => s => normalize (('\u001b[' + open + 'm') + s + ('\u001b[' + close + 'm'))
+
+colorCodes.forEach ((k, i) => {
+    if (k) {
+        Colors[k]                     = wrap (30  + i, Code.noColor)
+        Colors[camel ('bg',       k)] = wrap (40  + i, Code.noBgColor)
+        Colors[camel ('bgBright', k)] = wrap (100 + i, Code.noBgColor) } })
+
+styleCodes.forEach ((k, i) => {
+    if (k) {
+        Colors[k] = wrap (i, ((k === 'bright') || (k === 'dim')) ? Code.noBrightness : (20 + i)) } })
+
+module.exports = Colors
+
+
+
+},{"es7-object-polyfill":3}],3:[function(require,module,exports){
+module.exports = (function () {
+	"use strict";
+
+	var ownKeys      = require ('reflect.ownkeys')
+	var reduce       = Function.bind.call(Function.call, Array.prototype.reduce);
+	var isEnumerable = Function.bind.call(Function.call, Object.prototype.propertyIsEnumerable);
+	var concat       = Function.bind.call(Function.call, Array.prototype.concat);
+
+	if (!Object.values) {
+		 Object.values = function values(O) {
+			return reduce(ownKeys(O), (v, k) => concat(v, typeof k === 'string' && isEnumerable(O, k) ? [O[k]] : []), []) } }
+
+	if (!Object.entries) {
+		 Object.entries = function entries(O) {
+			return reduce(ownKeys(O), (e, k) => concat(e, typeof k === 'string' && isEnumerable(O, k) ? [[k, O[k]]] : []), []) } }
+
+	return Object
+
+}) ();
+},{"reflect.ownkeys":6}],4:[function(require,module,exports){
 (function (process){
 'use strict';
 module.exports = (function () {
@@ -40,7 +330,7 @@ module.exports = (function () {
 })();
 
 }).call(this,require('_process'))
-},{"_process":3}],3:[function(require,module,exports){
+},{"_process":5}],5:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -222,7 +512,20 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],4:[function(require,module,exports){
+},{}],6:[function(require,module,exports){
+if (typeof Reflect === 'object' && typeof Reflect.ownKeys === 'function') {
+  module.exports = Reflect.ownKeys;
+} else if (typeof Object.getOwnPropertySymbols === 'function') {
+  module.exports = function Reflect_ownKeys(o) {
+    return (
+      Object.getOwnPropertyNames(o).concat(Object.getOwnPropertySymbols(o))
+    );
+  }
+} else {
+  module.exports = Object.getOwnPropertyNames;
+}
+
+},{}],7:[function(require,module,exports){
 'use strict';
 var ansiRegex = require('ansi-regex')();
 
@@ -230,7 +533,7 @@ module.exports = function (str) {
 	return typeof str === 'string' ? str.replace(ansiRegex, '') : str;
 };
 
-},{"ansi-regex":1}],5:[function(require,module,exports){
+},{"ansi-regex":1}],8:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -255,14 +558,14 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],6:[function(require,module,exports){
+},{}],9:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],7:[function(require,module,exports){
+},{}],10:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -852,56 +1155,55 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":6,"_process":3,"inherits":5}],8:[function(require,module,exports){
+},{"./support/isBuffer":9,"_process":5,"inherits":8}],11:[function(require,module,exports){
 module.exports={
   "name": "color-everywhere",
   "version": "0.1.0",
   "description": "Add colors to text on your terminal. A faster replacement for chalk that also adds 256 color support",
-  "main": "dist/color-everywhere-node.min.js",
-  "browser": "dist/color-everywhere.min.js",
-  "dependencies": {
-  },
+  "main": "dist/color-everywhere-node.js",
+  "browser": "dist/color-everywhere.js",
+  "dependencies": {},
   "devDependencies": {
-      "babel-plugin-add-module-exports": "0.2.1",
-      "babel-polyfill": "6.20.0",
-      "babel-preset-es2015": "6.18.0",
-      "babelify": "7.3.0",
-      "eslint": "3.13.1",
-      "eslint-config-standard": "6.2.1",
-      "eslint-plugin-compat": "1.0.0",
-      "eslint-plugin-promise": "3.4.0",
-      "eslint-plugin-standard": "2.0.1",
-      "grunt": "1.0.1",
-      "grunt-browserify": "5.0.0",
-      "grunt-cli": "1.2.0",
-      "grunt-contrib-clean": "1.0.0",
-      "grunt-contrib-concat": "1.0.1",
-      "grunt-contrib-connect": "1.0.2",
-      "grunt-contrib-nodeunit": "1.0.0",
-      "grunt-contrib-qunit": "1.2.0",
-      "grunt-contrib-uglify": "2.0.0",
-      "grunt-contrib-watch": "1.0.0",
-      "grunt-mocha-test": "0.13.2",
-      "grunt-mocha-chai-sinon": "0.0.9",
-      "gruntify-eslint": "3.1.0",
-      "has-color": "0.1.7",
-      "mocha": "3.2.0",
-      "strip-ansi": "3.0.1",
-      "util": "0.10.3"
-},
+    "ansicolor": "^1.0.1",
+    "babel-plugin-add-module-exports": "0.2.1",
+    "babel-polyfill": "6.20.0",
+    "babel-preset-es2015": "6.18.0",
+    "babelify": "7.3.0",
+    "eslint": "3.13.1",
+    "eslint-config-standard": "6.2.1",
+    "eslint-plugin-compat": "1.0.0",
+    "eslint-plugin-promise": "3.4.0",
+    "eslint-plugin-standard": "2.0.1",
+    "grunt": "1.0.1",
+    "grunt-browserify": "5.0.0",
+    "grunt-cli": "1.2.0",
+    "grunt-contrib-clean": "1.0.0",
+    "grunt-contrib-concat": "1.0.1",
+    "grunt-contrib-connect": "1.0.2",
+    "grunt-contrib-nodeunit": "1.0.0",
+    "grunt-contrib-qunit": "1.2.0",
+    "grunt-contrib-uglify": "2.0.0",
+    "grunt-contrib-watch": "1.0.0",
+    "grunt-mocha-chai-sinon": "0.0.9",
+    "grunt-mocha-test": "0.13.2",
+    "gruntify-eslint": "3.1.0",
+    "has-color": "0.1.7",
+    "mocha": "3.2.0",
+    "strip-ansi": "3.0.1",
+    "util": "0.10.3"
+  },
   "scripts": {
-      "dev": "grunt dev",
-      "dev-browser": "grunt dev-browser",
-      "dev-node": "grunt dev-node",
-      "build": "grunt build",
-      "build-browser": "grunt build-browser",
-      "build-node": "grunt build-node",
-      "mocha": "grunt mocha",
-
-      "test": "grunt build && npm run mocha",
-      "node-test": "grunt build-node && npm run mocha",
-      "browser-test": "grunt dev-browser",
-      "start": "npm run browser-test"
+    "dev": "grunt dev",
+    "dev-browser": "grunt dev-browser",
+    "dev-node": "grunt dev-node",
+    "build": "grunt build",
+    "build-browser": "grunt build-browser",
+    "build-node": "grunt build-node",
+    "mocha": "grunt mocha",
+    "test": "grunt build && npm run mocha",
+    "node-test": "grunt build-node && npm run mocha",
+    "browser-test": "grunt dev-browser",
+    "start": "npm run browser-test"
   },
   "repository": {
     "type": "git",
@@ -909,7 +1211,11 @@ module.exports={
   },
   "author": "Brett Zamir",
   "contributors": [],
-  "keywords": ["colors", "crayon", "chalk"],
+  "keywords": [
+    "colors",
+    "crayon",
+    "chalk"
+  ],
   "engines": {
     "node": ">=6.9.2"
   },
@@ -920,7 +1226,7 @@ module.exports={
   "homepage": "https://github.com/brettz9/chalk256"
 }
 
-},{}],9:[function(require,module,exports){
+},{}],12:[function(require,module,exports){
 'use strict';
 
 var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
@@ -965,14 +1271,25 @@ module.exports = function (code) {
     }
 };
 
-},{"./css-to-ansi":11}],10:[function(require,module,exports){
+},{"./css-to-ansi":14}],13:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
     value: true
 });
 
+var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
+
 var _slicedToArray = function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; }();
+
+// THEMES
+
+
+// TEXT MODIFIERS
+
+
+// MAPS
+
 
 var _util = require('util');
 
@@ -986,6 +1303,10 @@ var _stripAnsi = require('strip-ansi');
 
 var _stripAnsi2 = _interopRequireDefault(_stripAnsi);
 
+var _ansicolor = require('ansicolor');
+
+var _ansicolor2 = _interopRequireDefault(_ansicolor);
+
 var _ansi256css = require('./ansi256css');
 
 var _ansi256css2 = _interopRequireDefault(_ansi256css);
@@ -998,12 +1319,49 @@ var _package = require('../package');
 
 var _package2 = _interopRequireDefault(_package);
 
+var _genericLogging = require('./themes/generic-logging');
+
+var _genericLogging2 = _interopRequireDefault(_genericLogging);
+
+var _palette = require('./text-modifiers/palette');
+
+var _palette2 = _interopRequireDefault(_palette);
+
+var _trap = require('./text-modifiers/trap');
+
+var _trap2 = _interopRequireDefault(_trap);
+
+var _zalgo = require('./text-modifiers/zalgo');
+
+var _zalgo2 = _interopRequireDefault(_zalgo);
+
+var _america = require('./maps/america');
+
+var _america2 = _interopRequireDefault(_america);
+
+var _rainbow = require('./maps/rainbow');
+
+var _rainbow2 = _interopRequireDefault(_rainbow);
+
+var _rainbowCrayon = require('./maps/rainbowCrayon');
+
+var _rainbowCrayon2 = _interopRequireDefault(_rainbowCrayon);
+
+var _random = require('./maps/random');
+
+var _random2 = _interopRequireDefault(_random);
+
+var _zebra = require('./maps/zebra');
+
+var _zebra2 = _interopRequireDefault(_zebra);
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 function _toConsumableArray(arr) { if (Array.isArray(arr)) { for (var i = 0, arr2 = Array(arr.length); i < arr.length; i++) { arr2[i] = arr[i]; } return arr2; } else { return Array.from(arr); } }
 
+var MODES = { NODE: 0, BROWSER: 1 };
+
 var logLevels = ['log', 'info', 'warn', 'error'];
-var VERY_DARK_COLORS = [0, 16, 17, 18, 232, 233, 234, 235];
 
 var codes = {};
 
@@ -1014,6 +1372,33 @@ var basics = {
     underline: [4, 24],
     inverse: [7, 27],
     blink: [5, 25],
+
+    // clearscreen: ['2J', 0], // no 'm' at end
+    // home: ['H', 0], // no 'm' at end
+    // at55: ['10;10H', 0], // no 'm' at end
+    blinkrapid: [6, 25],
+    hidden: [8, 28],
+    dim: [2, 22],
+    strikethrough: [9, 29],
+    font1: [11, 10],
+    font2: [12, 10],
+    font3: [13, 10],
+    font4: [14, 10],
+    font5: [15, 10],
+    font6: [16, 10],
+    font7: [17, 10],
+    font8: [18, 10],
+    font9: [19, 10],
+    fraktur: [20, 23],
+    frame: [51, 54],
+    circle: [52, 54],
+    overline: [53, 55],
+    iunderline: [60, 65],
+    idoubleunderline: [61, 65],
+    ioverline: [62, 65],
+    idoubleoverline: [63, 65],
+    istress: [64, 65],
+
     black: [30, 39],
     red: [31, 39],
     green: [32, 39],
@@ -1051,52 +1436,64 @@ var basics = {
 basics.grey = basics.gray;
 basics.bgGrey = basics.bgGray;
 
-Object.keys(basics).forEach(function (styleName) {
-    var _basics$styleName = _slicedToArray(basics[styleName], 2),
-        begin = _basics$styleName[0],
-        end = _basics$styleName[1];
+function forEachKV(obj, func) {
+    Object.keys(obj).forEach(function (key) {
+        func(key, obj[key], obj);
+    });
+}
 
-    codes[styleName] = ['\x1B[' + begin + 'm', '\x1B[' + end + 'm'];
-});
+function setupCodes() {
+    forEachKV(basics, function (styleName, _ref) {
+        var _ref2 = _slicedToArray(_ref, 2),
+            begin = _ref2[0],
+            end = _ref2[1];
 
-Object.keys(_cssToAnsi2.default).forEach(function (color) {
-    var code = _cssToAnsi2.default[color];
-    if (basics[color] != null) {
-        color += '_';
-    }
-    codes[color] = ['\x1B[38;5;' + code + 'm', '\x1B[39m'];
-    codes['bg' + color[0].toUpperCase() + color.slice(1).toLowerCase()] = ['\x1B[48;5;' + code + 'm', '\x1B[49m'];
-});
+        codes[styleName] = ['\x1B[' + begin + 'm', '\x1B[' + end + 'm'];
+    });
 
-function _rainbow(s) {
-    return (0, _stripAnsi2.default)(s).split('').map(function (c, i) {
-        return colors(i * 19 % 256 + 12 * VERY_DARK_COLORS.includes(i))(c);
+    forEachKV(_cssToAnsi2.default, function (color, code) {
+        if (basics[color] != null) {
+            color += '_';
+        }
+        codes[color] = ['\x1B[38;5;' + code + 'm', '\x1B[39m'];
+        codes['bg' + color[0].toUpperCase() + color.slice(1).toLowerCase()] = ['\x1B[48;5;' + code + 'm', '\x1B[49m'];
+    });
+
+    addColorFuncs(colors, []); // Also relies on codes
+}
+
+function sequencer(str, opts, map) {
+    var exploded = split(str);
+    return exploded.map(function (letter, i, exploded) {
+        return map(letter, i, exploded, opts);
     }).join('');
+}
+
+function setNewMethod(obj, name, fs) {
+    var f = makeStyleFunc(fs);
+    delete obj[name];
+    obj[name] = f;
+    return f;
 }
 
 /**
 * Adds functions like `.red` to an object
 */
 function addColorFuncs(obj, prevStyles) {
-    function _fn(name, style) {
-        return Object.defineProperty(obj, name, {
+    function _setCodeStyleMethod(name, style) {
+        Object.defineProperty(obj, name, {
             enumerable: true,
             configurable: true,
             get: function get() {
                 var newStyles = [styleFunc.apply(undefined, _toConsumableArray(codes[name]))].concat(prevStyles);
                 // Applies the style, `name`, to the colors
-                var f = makeStyleFunc(newStyles);
-                delete obj[name];
-                obj[name] = f;
-                return f;
+                return setNewMethod(obj, name, newStyles);
             }
         });
     };
-    Object.keys(codes).forEach(function (name) {
-        var style = codes[name];
-        _fn(name, style);
-    });
-    function _fn1(n) {
+    forEachKV(codes, _setCodeStyleMethod);
+
+    function _setCodeNumberMethods(_, n) {
         ['' + n, '_' + n].forEach(function (x) {
             Object.defineProperty(obj, x, {
                 enumerable: true,
@@ -1104,33 +1501,26 @@ function addColorFuncs(obj, prevStyles) {
                 get: function get() {
                     var newStyles = [foregroundCode(n)].concat(prevStyles);
                     // Sets the foreground color of the colors to `n`;
-                    var f = makeStyleFunc(newStyles);
-                    delete obj[n];
-                    obj[n] = f;
-                    return f;
+                    return setNewMethod(obj, n, newStyles);
                 }
             });
         });
-        return Object.defineProperty(obj, 'bg' + n, {
+        Object.defineProperty(obj, 'bg' + n, {
             enumerable: true,
             configurable: true,
             get: function get() {
                 var newStyles = [backgroundCode(n)].concat(prevStyles);
                 // Sets the background color of the colors to `n`
-                var f = makeStyleFunc(newStyles);
-                delete obj[n];
-                obj[n] = f;
-                return f;
+                return setNewMethod(obj, n, newStyles);
             }
         });
     };
-    Array(256).fill().forEach(_fn1);
+    Array(256).fill().forEach(_setCodeNumberMethods);
 
-    function _fn2(name, newStyleFunc) {
-        var f = obj[name] = function () {
-            return makeStyleFunc(newStyleFunc.apply(undefined, arguments).concat(prevStyles));
+    function _setGroundingMethods(name, newStyleFuncs) {
+        obj[name] = function () {
+            return makeStyleFunc(newStyleFuncs.apply(undefined, arguments).concat(prevStyles));
         };
-        return f;
     }
 
     [
@@ -1147,27 +1537,56 @@ function addColorFuncs(obj, prevStyles) {
         return [foregroundCode(getColorNumber(fg)), backgroundCode(getColorNumber(bg))];
     }],
     // Applies any styles and colors you pass in; accepts multiple arguments
-    ['color', general]].forEach(function (_ref) {
-        var _ref2 = _slicedToArray(_ref, 2),
-            name = _ref2[0],
-            newStyleFunc = _ref2[1];
+    ['color', general.bind(null, obj)]].forEach(function (_ref3) {
+        var _ref4 = _slicedToArray(_ref3, 2),
+            name = _ref4[0],
+            newStyleFuncs = _ref4[1];
 
-        _fn2(name, newStyleFunc);
+        _setGroundingMethods(name, newStyleFuncs);
     });
     obj.fg = obj.foreground;
     obj.bg = obj.background;
-    obj._ = obj.color;
-    Object.defineProperty(obj, 'rainbow', {
-        enumerable: true,
-        configurable: true,
-        get: function get() {
-            var newStyles = [_rainbow].concat(prevStyles);
-            // Applies rainbow styling to the colors!
-            var f = makeStyleFunc(newStyles);
-            delete obj.rainbow;
-            obj.rainbow = f;
-            return f;
-        }
+    obj._ = obj.colors = obj.color;
+
+    function addProperty(obj, prop, func) {
+        Object.defineProperty(obj, prop, {
+            enumerable: true,
+            configurable: true,
+            get: function get() {
+                var newStyles = [func].concat(prevStyles);
+                // Applies styling to the colors!
+                return setNewMethod(obj, prop, newStyles);
+            }
+        });
+    }
+
+    function useString(ret) {
+        return Array.isArray(ret) ? lastStringValue : ret;
+    }
+
+    forEachKV(colors.themes, function (name, thm) {
+        addProperty(obj, name, function (str) {
+            var opts = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : {};
+
+            if (Array.isArray(thm)) {
+                return thm.reduce(function (out, nme) {
+                    return useString(colors[nme](out, opts));
+                }, str);
+            }
+            return useString(colors[thm](str, opts));
+        });
+    });
+    forEachKV(colors.textModifiers, function (name, textMod) {
+        addProperty(obj, name, function (str, opts) {
+            return useString(textMod(str, opts));
+        });
+    });
+    forEachKV(colors.maps, function (name, map) {
+        addProperty(obj, name, function (str, opts) {
+            return sequencer(str, opts, function () {
+                return useString(map.apply(undefined, arguments));
+            });
+        });
     });
 }
 
@@ -1177,26 +1596,59 @@ function styleFunc(begin, end) {
     };
 }
 
+var lastStringValue = void 0;
+
 /**
 * Returns a function that applies a list of styles
 * Styles are encoded using an Array of functions
 */
 function makeStyleFunc(styles) {
     function f() {
-        var s = _util2.default.format.apply(_util2.default, arguments);
-        if (colors.enabled) {
-            styles.forEach(function (style) {
-                s = style(s);
-            });
+        for (var _len = arguments.length, args = Array(_len), _key = 0; _key < _len; _key++) {
+            args[_key] = arguments[_key];
         }
-        return s;
+
+        var opts = args.slice(-1)[0];
+        var hasOpts = opts && (typeof opts === 'undefined' ? 'undefined' : _typeof(opts)) === 'object';
+        var s = hasOpts ? _util2.default.format.apply(_util2.default, _toConsumableArray(args.slice(0, -1))) : _util2.default.format.apply(_util2.default, args);
+        function addStyles(styles, s) {
+            return styles.reduce(function (s, style) {
+                s = style(s, hasOpts ? opts : { addStyles: addStyles.bind(null, styles.slice(1)) });
+                lastStringValue = s;
+                return s;
+            }, s);
+        }
+        if (hasOpts) {
+            opts.addStyles = addStyles.bind(null, styles.slice(1));
+        }
+        if (!s && hasOpts) {
+            var _ret = function () {
+                var oldStyles = styles[0];
+                styles[0] = function (s) {
+                    return oldStyles(s, opts);
+                };
+                return {
+                    v: f
+                };
+            }();
+
+            if ((typeof _ret === 'undefined' ? 'undefined' : _typeof(_ret)) === "object") return _ret.v;
+        }
+        s = addStyles(styles, s);
+        // lastStringValue = s;
+        // f.stringValue = s; // Might be useful to expose
+        if (colors.getMode() === MODES.NODE) {
+            return [s];
+        }
+        return [].concat(_toConsumableArray(_ansicolor2.default.parse(s).browserConsoleArguments));
     }
     addColorFuncs(f, styles);
     logLevels.forEach(function (level) {
-        var func = f[level] = function () {
-            return colors.logger[level](f(_util2.default.format.apply(_util2.default, arguments)));
+        f[level] = function () {
+            var _colors$logger;
+
+            return (_colors$logger = colors.logger)[level].apply(_colors$logger, _toConsumableArray(f(_util2.default.format.apply(_util2.default, arguments))));
         };
-        return func;
     });
     return f;
 }
@@ -1229,26 +1681,38 @@ function ansiStyle(desc) {
 * Turns something like ['red blue', 'white'] into ['red', 'blue', 'white']
 */
 function splitFlatten(list) {
-    var _ref3;
+    var _ref5;
 
     function split(x) {
         return typeof x === 'string' ? x.split(/\s+/) : [x];
     }
-    return (_ref3 = []).concat.apply(_ref3, _toConsumableArray(list.map(function (x) {
+    return (_ref5 = []).concat.apply(_ref5, _toConsumableArray(list.map(function (x) {
         return split(x);
     })));
 }
 
-function general() {
+function general(obj) {
     function t(x) {
         if (codes[x] != null) {
             return styleFunc.apply(undefined, _toConsumableArray(codes[x]));
         }
-        return ansiStyle(x);
+        var s = void 0;
+        try {
+            s = ansiStyle(x);
+        } catch (e) {
+            s = x in obj && function (str) {
+                obj[x](str);
+                return lastStringValue;
+            };
+        }
+        if (s === undefined) {
+            throw new Error('Unrecognized style supplied to colors()');
+        }
+        return s;
     };
 
-    for (var _len = arguments.length, styles = Array(_len), _key = 0; _key < _len; _key++) {
-        styles[_key] = arguments[_key];
+    for (var _len2 = arguments.length, styles = Array(_len2 > 1 ? _len2 - 1 : 0), _key2 = 1; _key2 < _len2; _key2++) {
+        styles[_key2 - 1] = arguments[_key2];
     }
 
     return splitFlatten(styles).reverse().map(function (x) {
@@ -1256,19 +1720,66 @@ function general() {
     });
 }
 
-var colors = function colors() {
-    return makeStyleFunc(general.apply(undefined, arguments));
-};
+function split(str) {
+    var exploded = [];
+    str.replace(/((?:\u001b\[.*?m)*)([^\u001b]*)/g, function (_, n1, n2) {
+        if (n1) {
+            exploded.push(n1);
+        }
+        if (n2) {
+            exploded = exploded.concat(n2.split(''));
+        }
+    });
+    return exploded;
+}
 
-addColorFuncs(colors, []);
+var colors = function colors() {
+    for (var _len3 = arguments.length, styles = Array(_len3), _key3 = 0; _key3 < _len3; _key3++) {
+        styles[_key3] = arguments[_key3];
+    }
+
+    return makeStyleFunc(general.apply(undefined, [colors].concat(styles)));
+};
 
 colors.supportsColor = _hasColor2.default;
 
-colors.stripColor = _stripAnsi2.default;
+colors.stripColor = colors.strip = _stripAnsi2.default;
 
-if (colors.enabled == null) {
-    colors.enabled = _hasColor2.default;
-}
+colors.split = split;
+
+var _enabled = void 0;
+Object.defineProperty(colors, 'enabled', {
+    enumerable: true,
+    configurable: true,
+    get: function get() {
+        return _enabled;
+    },
+    set: function set(val) {
+        _enabled = val;
+        setModeByEnabled();
+    }
+});
+colors.enabled = _hasColor2.default;
+
+colors.join = function () {
+    for (var _len4 = arguments.length, args = Array(_len4), _key4 = 0; _key4 < _len4; _key4++) {
+        args[_key4] = arguments[_key4];
+    }
+
+    if (colors.getMode() === MODES.NODE) {
+        return [args.reduce(function (prev, arg) {
+            return prev + (Array.isArray(arg) ? arg[0] : arg);
+        }, '')];
+    }
+    var styleArgs = [];
+    return [args.reduce(function (prev, arg) {
+        var isArr = Array.isArray(arg);
+        if (isArr) {
+            styleArgs.push.apply(styleArgs, _toConsumableArray(arg.slice(1)));
+        }
+        return prev + (isArr ? arg[0] : arg);
+    }, '')].concat(styleArgs);
+};
 
 if (colors.logger == null) {
     colors.logger = console;
@@ -1279,7 +1790,11 @@ logLevels.forEach(function (level) {
         enumerable: true,
         configurable: true,
         get: function get() {
-            return colors.logger[level];
+            return function () {
+                var _colors$logger2;
+
+                (_colors$logger2 = colors.logger)[level].apply(_colors$logger2, _toConsumableArray(colors.join.apply(colors, arguments)));
+            };
         }
     });
 });
@@ -1296,22 +1811,360 @@ Object.defineProperty(colors, 'success', {
     }
 });
 
-/**
-* Displays all the colors
-*/
-colors.palette = function () {
-    return colors.log(colors.inverse(Array(256).fill().map(function (_, i) {
-        return colors(i)('  ' + (VERY_DARK_COLORS.includes(i) ? colors.bgWhite(i) : i) + '  ');
-    }).join('')));
-};
-
 colors.version = _package2.default.version;
 colors.splitFlatten = splitFlatten;
+
+colors.themes = { 'generic-logging': _genericLogging2.default };
+colors.textModifiers = { palette: _palette2.default, trap: _trap2.default, zalgo: _zalgo2.default };
+colors.maps = { america: _america2.default, rainbow: _rainbow2.default, rainbowCrayon: _rainbowCrayon2.default, random: _random2.default, zebra: _zebra2.default };
+
+// Define `setTheme`, `setMaps`, `setTextModifiers` methods
+['theme', 'textModifier', 'map'].forEach(function (type, i, types) {
+    var typePlural = type + 's';
+    colors['set' + type[0].toUpperCase() + type.slice(1) + (type === 'theme' ? '' : 's')] = function (obj, force) {
+        forEachKV(obj, function (key, val) {
+            types.forEach(function (typ) {
+                var typePlural = typ + 's';
+                if ((!force || type !== typ) && key in colors[typePlural]) {
+                    throw new Error('The supplied ' + typ + ', ' + key + ', is already present on the `' + typePlural + '` object; please delete first if you wish to replace.');
+                }
+            });
+            colors[typePlural][key] = val;
+        });
+        addColorFuncs(colors, []);
+    };
+});
+
+colors.setBasic = function (key, val) {
+    if (key && (typeof key === 'undefined' ? 'undefined' : _typeof(key)) === 'object') {
+        return forEachKV(key, colors.setBasic);
+    }
+    if (!Array.isArray(val) || val.length !== 2) {
+        throw new Error('Basic values must be two-item arrays');
+    }
+    basics[key] = val;
+    setupCodes();
+};
+
+var mode = void 0;
+colors.getMode = function () {
+    return mode;
+};
+function setMode(m) {
+    if (!Object.keys(MODES).some(function (name) {
+        return m === MODES[name];
+    })) {
+        throw new Error('Please supply a supported constant MODE value to `setMode`');
+    }
+    mode = m;
+};
+function setModeByEnabled() {
+    setMode(colors.enabled ? MODES.NODE : MODES.BROWSER);
+}
+setModeByEnabled();
+
+colors.setMode = setMode;
+colors.MODES = MODES;
+
+setupCodes();
 
 exports.default = colors;
 module.exports = exports['default'];
 
-},{"../package":8,"./ansi256css":9,"./css-to-ansi":11,"has-color":2,"strip-ansi":4,"util":7}],11:[function(require,module,exports){
+},{"../package":11,"./ansi256css":12,"./css-to-ansi":14,"./maps/america":15,"./maps/rainbow":16,"./maps/rainbowCrayon":17,"./maps/random":18,"./maps/zebra":19,"./text-modifiers/palette":20,"./text-modifiers/trap":21,"./text-modifiers/zalgo":22,"./themes/generic-logging":23,"ansicolor":2,"has-color":4,"strip-ansi":7,"util":10}],14:[function(require,module,exports){
 module.exports={"aliceblue":231,"antiquewhite":230,"aqua":51,"aquamarine":122,"azure":231,"beige":230,"bisque":224,"black":16,"blanchedalmond":230,"blue":21,"blueviolet":134,"brown":131,"burlywood":187,"cadetblue":109,"chartreuse":118,"chocolate":173,"coral":210,"cornflowerblue":111,"cornsilk":230,"crimson":161,"cyan":51,"darkblue":19,"darkcyan":37,"darkgoldenrod":178,"darkgray":145,"darkgreen":28,"darkkhaki":186,"darkmagenta":127,"darkolivegreen":101,"darkorange":214,"darkorchid":134,"darkred":124,"darksalmon":216,"darkseagreen":151,"darkslateblue":61,"darkslategray":66,"darkturquoise":44,"darkviolet":128,"deeppink":199,"deepskyblue":45,"dimgray":102,"dodgerblue":75,"firebrick":131,"floralwhite":231,"forestgreen":71,"fuchsia":201,"gainsboro":188,"ghostwhite":231,"gold":220,"goldenrod":179,"gray":145,"green":34,"greenyellow":155,"honeydew":231,"hotpink":212,"indianred":174,"indigo":55,"ivory":231,"khaki":229,"lavender":231,"lavenderblush":231,"lawngreen":118,"lemonchiffon":230,"lightblue":153,"lightcoral":217,"lightcyan":195,"lightgoldenrodyellow":230,"lightgray":188,"lightgreen":157,"lightpink":224,"lightsalmon":216,"lightseagreen":73,"lightskyblue":153,"lightslategray":109,"lightsteelblue":152,"lightyellow":230,"lime":46,"limegreen":77,"linen":231,"magenta":201,"maroon":124,"mediumaquamarine":115,"mediumblue":20,"mediumorchid":176,"mediumpurple":140,"mediumseagreen":78,"mediumslateblue":105,"mediumspringgreen":49,"mediumturquoise":80,"mediumvioletred":163,"midnightblue":18,"mintcream":231,"mistyrose":224,"moccasin":224,"navajowhite":223,"navy":19,"oldlace":231,"olive":142,"olivedrab":107,"orange":214,"orangered":202,"orchid":176,"palegoldenrod":229,"palegreen":157,"paleturquoise":159,"palevioletred":175,"papayawhip":230,"peachpuff":224,"peru":179,"pink":224,"plum":182,"powderblue":153,"purple":127,"red":196,"rosybrown":181,"royalblue":68,"saddlebrown":130,"salmon":216,"sandybrown":216,"seagreen":72,"seashell":231,"sienna":137,"silver":188,"skyblue":153,"slateblue":104,"slategray":109,"snow":231,"springgreen":48,"steelblue":74,"tan":187,"teal":37,"thistle":188,"tomato":209,"turquoise":80,"violet":219,"wheat":224,"white":231,"whitesmoke":231,"yellow":226,"yellowgreen":149}
-},{}]},{},[10])(10)
+},{}],15:[function(require,module,exports){
+'use strict';
+
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+
+exports.default = function (letter, i, exploded) {
+    if (letter === ' ') return letter;
+    switch (i % 3) {
+        case 0:
+            return _colorEverywhere2.default.red(letter);
+        case 1:
+            return _colorEverywhere2.default.white(letter);
+        case 2:
+            return _colorEverywhere2.default.blue(letter);
+    }
+};
+
+var _colorEverywhere = require('../color-everywhere');
+
+var _colorEverywhere2 = _interopRequireDefault(_colorEverywhere);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+;
+module.exports = exports['default'];
+
+},{"../color-everywhere":13}],16:[function(require,module,exports){
+'use strict';
+
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+
+exports.default = function (letter, i, exploded) {
+    if (letter === ' ') {
+        return letter;
+    }
+    return _colorEverywhere2.default[rainbowColors[i++ % rainbowColors.length]](letter);
+};
+
+var _colorEverywhere = require('../color-everywhere');
+
+var _colorEverywhere2 = _interopRequireDefault(_colorEverywhere);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+var rainbowColors = ['red', 'yellow', 'green', 'blue', 'magenta']; // RoY G BiV
+;
+module.exports = exports['default'];
+
+},{"../color-everywhere":13}],17:[function(require,module,exports){
+'use strict';
+
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+
+var _colorEverywhere = require('../color-everywhere');
+
+var _colorEverywhere2 = _interopRequireDefault(_colorEverywhere);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+var VERY_DARK_COLORS = [0, 16, 17, 18, 232, 233, 234, 235];
+
+exports.default = function (letter, i, exploded) {
+    return (0, _colorEverywhere2.default)(i * 19 % 256 + 12 * VERY_DARK_COLORS.includes(i))(letter);
+};
+
+module.exports = exports['default'];
+
+},{"../color-everywhere":13}],18:[function(require,module,exports){
+'use strict';
+
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+
+exports.default = function (letter, i, exploded) {
+    return letter === ' ' ? letter : _colorEverywhere2.default[available[Math.round(Math.random() * (available.length - 1))]](letter);
+};
+
+var _colorEverywhere = require('../color-everywhere');
+
+var _colorEverywhere2 = _interopRequireDefault(_colorEverywhere);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+var available = ['underline', 'inverse', 'grey', 'yellow', 'red', 'green', 'blue', 'white', 'cyan', 'magenta'];
+;
+module.exports = exports['default'];
+
+},{"../color-everywhere":13}],19:[function(require,module,exports){
+'use strict';
+
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+
+exports.default = function (letter, i, exploded) {
+    return i % 2 === 0 ? letter : _colorEverywhere2.default.inverse(letter);
+};
+
+var _colorEverywhere = require('../color-everywhere');
+
+var _colorEverywhere2 = _interopRequireDefault(_colorEverywhere);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+;
+module.exports = exports['default'];
+
+},{"../color-everywhere":13}],20:[function(require,module,exports){
+'use strict';
+
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+
+exports.default = function (text, options) {
+    return _colorEverywhere2.default.inverse(arr256.map(function (_, i) {
+        return (0, _colorEverywhere2.default)(i)('  ' + (VERY_DARK_COLORS.includes(i) ? _colorEverywhere2.default.bgWhite(i) : i) + '  ');
+    }).join(''));
+};
+
+var _colorEverywhere = require('../color-everywhere');
+
+var _colorEverywhere2 = _interopRequireDefault(_colorEverywhere);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+/**
+* Displays all the colors
+*/
+var VERY_DARK_COLORS = [0, 16, 17, 18, 232, 233, 234, 235];
+var arr256 = Array(256).fill();
+
+;
+module.exports = exports['default'];
+
+},{"../color-everywhere":13}],21:[function(require,module,exports){
+'use strict';
+
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+
+exports.default = function (text, options) {
+    var result = '';
+    text = text || 'Run the trap, drop the bass';
+    text = text.split('');
+
+    text.forEach(function (c) {
+        c = c.toLowerCase();
+        var chars = trap[c] || [' '];
+        var rand = Math.floor(Math.random() * chars.length);
+        if (typeof trap[c] !== 'undefined') {
+            result += trap[c][rand];
+        } else {
+            result += c;
+        }
+    });
+    return result;
+};
+
+var trap = {
+    a: ['@', '\u0104', '\u023A', '\u0245', '\u0394', '\u039B', '\u0414'],
+    b: ['\xDF', '\u0181', '\u0243', '\u026E', '\u03B2', '\u0E3F'],
+    c: ['\xA9', '\u023B', '\u03FE'],
+    d: ['\xD0', '\u018A', '\u0500', '\u0501', '\u0502', '\u0503'],
+    e: ['\xCB', '\u0115', '\u018E', '\u0258', '\u03A3', '\u03BE', '\u04BC', '\u0A6C'],
+    f: ['\u04FA'],
+    g: ['\u0262'],
+    h: ['\u0126', '\u0195', '\u04A2', '\u04BA', '\u04C7', '\u050A'],
+    i: ['\u0F0F'],
+    j: ['\u0134'],
+    k: ['\u0138', '\u04A0', '\u04C3', '\u051E'],
+    l: ['\u0139'],
+    m: ['\u028D', '\u04CD', '\u04CE', '\u0520', '\u0521', '\u0D69'],
+    n: ['\xD1', '\u014B', '\u019D', '\u0376', '\u03A0', '\u048A'],
+    o: ['\xD8', '\xF5', '\xF8', '\u01FE', '\u0298', '\u047A', '\u05DD', '\u06DD', '\u0E4F'],
+    p: ['\u01F7', '\u048E'],
+    q: ['\u09CD'],
+    r: ['\xAE', '\u01A6', '\u0210', '\u024C', '\u0280', '\u042F'],
+    s: ['\xA7', '\u03DE', '\u03DF', '\u03E8'],
+    t: ['\u0141', '\u0166', '\u0373'],
+    u: ['\u01B1', '\u054D'],
+    v: ['\u05D8'],
+    w: ['\u0428', '\u0460', '\u047C', '\u0D70'],
+    x: ['\u04B2', '\u04FE', '\u04FC', '\u04FD'],
+    y: ['\xA5', '\u04B0', '\u04CB'],
+    z: ['\u01B5', '\u0240']
+};
+
+;
+module.exports = exports['default'];
+
+},{}],22:[function(require,module,exports){
+'use strict';
+
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+
+exports.default = function (text, options) {
+    text = text || '   he is here   ';
+
+    var soul = {
+        up: ['̍', '̎', '̄', '̅', '̿', '̑', '̆', '̐', '͒', '͗', '͑', '̇', '̈', '̊', '͂', '̓', '̈', '͊', '͋', '͌', '̃', '̂', '̌', '͐', '̀', '́', '̋', '̏', '̒', '̓', '̔', '̽', '̉', 'ͣ', 'ͤ', 'ͥ', 'ͦ', 'ͧ', 'ͨ', 'ͩ', 'ͪ', 'ͫ', 'ͬ', 'ͭ', 'ͮ', 'ͯ', '̾', '͛', '͆', '̚'],
+        down: ['̖', '̗', '̘', '̙', '̜', '̝', '̞', '̟', '̠', '̤', '̥', '̦', '̩', '̪', '̫', '̬', '̭', '̮', '̯', '̰', '̱', '̲', '̳', '̹', '̺', '̻', '̼', 'ͅ', '͇', '͈', '͉', '͍', '͎', '͓', '͔', '͕', '͖', '͙', '͚', '̣'],
+        mid: ['̕', '̛', '̀', '́', '͘', '̡', '̢', '̧', '̨', '̴', '̵', '̶', '͜', '͝', '͞', '͟', '͠', '͢', '̸', '̷', '͡', ' ҉']
+    };
+    var all = [].concat(soul.up, soul.down, soul.mid);
+
+    function randomNumber(range) {
+        return Math.floor(Math.random() * range);
+    }
+
+    function isChar(chr) {
+        return all.some(function (c) {
+            return c === chr;
+        });
+    }
+
+    function heComes(text, options) {
+        var result = '';
+
+        options = options || {};
+        options.up = typeof options.up !== 'undefined' ? options.up : true;
+        options.mid = typeof options.mid !== 'undefined' ? options.mid : true;
+        options.down = typeof options.down !== 'undefined' ? options.down : true;
+        options.size = typeof options.size !== 'undefined' ? options.size : 'maxi';
+
+        text = text.split('');
+
+        text.forEach(function (l) {
+            if (isChar(l)) {
+                return;
+            }
+            result += l;
+            var counts = { up: 0, down: 0, mid: 0 };
+            switch (options.size) {
+                case 'mini':
+                    counts.up = randomNumber(8);
+                    counts.mid = randomNumber(2);
+                    counts.down = randomNumber(8);
+                    break;
+                case 'maxi':
+                    counts.up = randomNumber(16) + 3;
+                    counts.mid = randomNumber(4) + 1;
+                    counts.down = randomNumber(64) + 3;
+                    break;
+                default:
+                    counts.up = randomNumber(8) + 1;
+                    counts.mid = randomNumber(6) / 2;
+                    counts.down = randomNumber(8) + 1;
+                    break;
+            }
+
+            ['up', 'mid', 'down'].forEach(function (index) {
+                for (var i = 0; i <= counts[index]; i++) {
+                    if (options[index]) {
+                        result = result + soul[index][randomNumber(soul[index].length)];
+                    }
+                }
+            });
+        });
+        return result;
+    }
+
+    // don't summon him
+    return heComes(text, options);
+};
+
+;
+module.exports = exports['default'];
+
+},{}],23:[function(require,module,exports){
+module.exports={
+    "silly": "rainbow",
+    "input": "grey",
+    "verbose": "cyan",
+    "prompt": "grey",
+    "info": "green",
+    "data": "grey",
+    "help": "cyan",
+    "warn": "yellow",
+    "debug": "blue",
+    "error": "red"
+}
+
+},{}]},{},[13])(13)
 });

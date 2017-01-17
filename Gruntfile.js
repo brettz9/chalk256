@@ -51,6 +51,8 @@ module.exports = function (grunt) {
                 }
             }
         },
+        // Temporarily disabling here (and in "main"/"browser" in package.json)
+        //   pending https://github.com/mishoo/UglifyJS2/issues/448
         uglify: {
             browser: {
                 options: {
@@ -99,7 +101,7 @@ module.exports = function (grunt) {
         watch: {
             all: {
                 files: ['src/**/*.js'],
-                tasks: ['eslint', 'browserify', 'uglify']
+                tasks: ['eslint', 'browserify'] // , 'uglify'
             }
         }
     });
@@ -108,9 +110,9 @@ module.exports = function (grunt) {
         if (key !== 'grunt' && key.indexOf('grunt') === 0) { grunt.loadNpmTasks(key); }
     }
 
-    grunt.registerTask('build-browser', ['eslint', 'browserify:browser', 'uglify:browser']);
-    grunt.registerTask('build-node', ['eslint', 'browserify:node', 'uglify:node']);
-    grunt.registerTask('build', ['eslint', 'browserify', 'uglify']);
+    grunt.registerTask('build-browser', ['eslint', 'browserify:browser']); // , 'uglify:browser']);
+    grunt.registerTask('build-node', ['eslint', 'browserify:node']); // , 'uglify:node']);
+    grunt.registerTask('build', ['eslint', 'browserify']); // , 'uglify'
 
     grunt.registerTask('mocha', ['mocha-chai-sinon:test']);
 
